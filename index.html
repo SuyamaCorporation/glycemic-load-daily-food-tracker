@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>グリセミック負荷日次食事トラッカー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-4">
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-bold text-center text-green-700 mb-2">グリセミック負荷日次食事トラッカー</h1>
+  <p class="text-center text-xs text-gray-500 mb-6">GL値（グリセミック負荷）で血糖値スパイクリスクを管理</p>
+
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <h2 class="text-lg font-semibold text-gray-700 mb-4">食品を追加</h2>
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div class="col-span-2">
+        <label for="food-select" class="block text-sm font-medium text-gray-600 mb-1">食品を選択</label>
+        <select id="food-select" class="w-full border rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+          <option value="">-- 食品を選択 --</option>
+        </select>
+      </div>
+      <div>
+        <label for="custom-food" class="block text-sm font-medium text-gray-600 mb-1">または食品名を入力</label>
+        <input id="custom-food" type="text" class="w-full border rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" placeholder="カスタム食品名">
+      </div>
+      <div>
+        <label for="custom-gi" class="block text-sm font-medium text-gray-600 mb-1">GI値（カスタム時）</label>
+        <input id="custom-gi" type="number" min="1" max="100" class="w-full border rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" placeholder="例: 70">
+      </div>
+      <div>
+        <label for="carb-amount" class="block text-sm font-medium text-gray-600 mb-1">炭水化物量（g）</label>
+        <input id="carb-amount" type="number" min="1" class="w-full border rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" placeholder="例: 50">
+      </div>
+      <div>
+        <label for="meal-type" class="block text-sm font-medium text-gray-600 mb-1">食事タイミング</label>
+        <select id="meal-type" class="w-full border rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+          <option value="朝食">朝食</option>
+          <option value="昼食">昼食</option>
+          <option value="夕食">夕食</option>
+          <option value="間食">間食</option>
+        </select>
+      </div>
+    </div>
+    <button id="add-btn" aria-label="食品を追加" class="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition">追加</button>
+  </div>
+
+  <div id="summary-section" class="hidden bg-white rounded-xl shadow p-6 mb-6">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-semibold text-gray-700">本日のGL合計</h2>
+      <div>
+        <label for="date-select" class="sr-only">日付を選択</label>
+        <input id="date-select" type="date" class="border rounded p-1 text-sm focus:outline-none focus:ring-1 focus:ring-green-400">
+      </div>
+    </div>
+    <div class="flex items-center gap-6 mb-4">
+      <div class="text-center">
+        <div id="total-gl" class="text-5xl font-bold text-green-600">0</div>
+        <div class="text-xs text-gray-500">総GL</div>
+      </div>
+      <div class="flex-1">
+        <div id="risk-bar-wrap" class="h-5 bg-gray-200 rounded-full overflow-hidden mb-1">
+          <div id="risk-bar" class="h-5 rounded-full transition-all duration-500 bg-green-500" style="width:0%"></div>
+        </div>
+        <div id="risk-label" class="text-sm font-semibold text-green-600">低リスク（GL ≤ 80）</div>
+        <div class="text-xs text-gray-400">目安: 低≤80 / 中81-120 / 高>120</div>
+      </div>
+    </div>
+    <div id="meal-breakdown" class="grid grid-cols-4 gap-2 mb-4"></div>
+    <div id="gi-distribution" class="mb-2">
+      <div class="text-sm font-semibold text-gray-600 mb-2">GI別食品分布</div>
+      <div id="gi-bars"></div>
+    </div>
+  </div>
+
+  <div id="food-list-section" class="hidden bg-white rounded-xl shadow p-6 mb-6">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-semibold text-gray-700">食品リスト</h2>
+      <button id="clear-day-btn" aria-label="本日のデータを削除" class="text-xs text-red-400 hover:text-red-600">本日削除</button>
+    </div>
+    <div id="food-list" class="space-y-2"></div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-6">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">低GL代替食品リスト</h2>
+    <div id="alternatives" class="grid grid-cols-2 gap-2"></div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+const STORAGE_KEY = 'app_glycemic-load-daily-food-tracker';
+
+const FOOD_DB = [
+  {name:'白米（150g）', gi:72, defaultCarb:55},
+  {name:'玄米（150g）', gi:50, defaultCarb:52},
+  {name:'食パン（1枚）', gi:91, defaultCarb:26},
+  {name:'全粒粉パン（1枚）', gi:51, defaultCarb:24},
+  {name:'うどん（1玉）', gi:80, defaultCarb:52},
+  {name:'そば（1玉）', gi:54, defaultCarb:48},
+  {name:'パスタ（100g調理後）', gi:65, defaultCarb:28},
+  {name:'じゃがいも（1個）', gi:90, defaultCarb:30},
+  {name:'さつまいも（1個）', gi:55, defaultCarb:35},
+  {name:'バナナ（1本）', gi:52, defaultCarb:23},
+  {name:'りんご（1個）', gi:36, defaultCarb:19},
+  {name:'コーラ（350ml）', gi:63, defaultCarb:38},
+  {name:'牛乳（200ml）', gi:27, defaultCarb:10},
+  {name:'豆腐（100g）', gi:42, defaultCarb:2},
+  {name:'ブロッコリー（100g）', gi:15, defaultCarb:4},
+];
+
+const LOW_GL_ALTERNATIVES = [
+  {name:'玄米', gl:'低', note:'白米→玄米でGL -30%'},
+  {name:'全粒粉パン', gl:'低', note:'食パン→全粒粉でGI -40'},
+  {name:'そば', gl:'低', note:'うどん→そばでGI -26'},
+  {name:'さつまいも', gl:'低', note:'じゃがいも→さつまいもでGL↓'},
+  {name:'りんご', gl:'低', note:'バナナの代わりに'},
+  {name:'豆腐・大豆製品', gl:'低', note:'炭水化物置換で血糖安定'},
+  {name:'ブロッコリー', gl:'低', note:'食物繊維で吸収速度低下'},
+  {name:'牛乳・乳製品', gl:'低', note:'インスリン応答緩和効果'},
+];
+
+function loadData() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+}
+function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+
+function calcGL(gi, carb) { return Math.round((gi * carb) / 100); }
+
+function getSelectedDate() { return document.getElementById('date-select').value || todayStr(); }
+
+function populateFoodSelect() {
+  const sel = document.getElementById('food-select');
+  FOOD_DB.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify({name: f.name, gi: f.gi, carb: f.defaultCarb});
+    opt.textContent = f.name + ' (GI:' + f.gi + ')';
+    sel.appendChild(opt);
+  });
+}
+
+function render() {
+  const data = loadData();
+  const date = getSelectedDate();
+  const dayFoods = data[date] || [];
+
+  if (dayFoods.length === 0) {
+    document.getElementById('summary-section').classList.add('hidden');
+    document.getElementById('food-list-section').classList.add('hidden');
+  } else {
+    document.getElementById('summary-section').classList.remove('hidden');
+    document.getElementById('food-list-section').classList.remove('hidden');
+  }
+
+  const totalGL = dayFoods.reduce((a, f) => a + f.gl, 0);
+  document.getElementById('total-gl').textContent = totalGL;
+
+  const riskPct = Math.min(100, Math.round((totalGL / 180) * 100));
+  document.getElementById('risk-bar').style.width = riskPct + '%';
+  let riskColor, riskText;
+  if (totalGL <= 80) { riskColor = 'bg-green-500'; riskText = '低リスク（GL ≤ 80）'; document.getElementById('total-gl').className = 'text-5xl font-bold text-green-600'; }
+  else if (totalGL <= 120) { riskColor = 'bg-yellow-400'; riskText = '中リスク（GL 81-120）'; document.getElementById('total-gl').className = 'text-5xl font-bold text-yellow-600'; }
+  else { riskColor = 'bg-red-500'; riskText = '高リスク（GL > 120）⚠'; document.getElementById('total-gl').className = 'text-5xl font-bold text-red-600'; }
+  document.getElementById('risk-bar').className = 'h-5 rounded-full transition-all duration-500 ' + riskColor;
+  document.getElementById('risk-label').textContent = riskText;
+
+  const meals = ['朝食','昼食','夕食','間食'];
+  const mealBreak = document.getElementById('meal-breakdown');
+  mealBreak.innerHTML = '';
+  meals.forEach(m => {
+    const mGL = dayFoods.filter(f => f.meal === m).reduce((a, f) => a + f.gl, 0);
+    const cell = document.createElement('div');
+    cell.className = 'text-center bg-gray-50 rounded-lg p-2';
+    const v = document.createElement('div');
+    v.className = 'text-xl font-bold text-gray-700';
+    v.textContent = mGL;
+    const l = document.createElement('div');
+    l.className = 'text-xs text-gray-500';
+    l.textContent = m;
+    cell.appendChild(v);
+    cell.appendChild(l);
+    mealBreak.appendChild(cell);
+  });
+
+  const giGroups = [{label:'低GI（≤55）', min:0, max:55, color:'bg-green-500'},
+                    {label:'中GI（56-69）', min:56, max:69, color:'bg-yellow-400'},
+                    {label:'高GI（≥70）', min:70, max:100, color:'bg-red-400'}];
+  const giBars = document.getElementById('gi-bars');
+  giBars.innerHTML = '';
+  giGroups.forEach(g => {
+    const foods = dayFoods.filter(f => f.gi >= g.min && f.gi <= g.max);
+    const pct = dayFoods.length > 0 ? Math.round((foods.length / dayFoods.length) * 100) : 0;
+    const row = document.createElement('div');
+    row.className = 'mb-2';
+    const lrow = document.createElement('div');
+    lrow.className = 'flex justify-between text-xs text-gray-500 mb-0.5';
+    const ll = document.createElement('span');
+    ll.textContent = g.label;
+    const lv = document.createElement('span');
+    lv.textContent = foods.length + '品 (' + pct + '%)';
+    lrow.appendChild(ll);
+    lrow.appendChild(lv);
+    const track = document.createElement('div');
+    track.className = 'h-2 bg-gray-200 rounded';
+    const fill = document.createElement('div');
+    fill.className = 'h-2 rounded ' + g.color;
+    fill.style.width = pct + '%';
+    track.appendChild(fill);
+    row.appendChild(lrow);
+    row.appendChild(track);
+    giBars.appendChild(row);
+  });
+
+  const foodList = document.getElementById('food-list');
+  foodList.innerHTML = '';
+  dayFoods.forEach((f, idx) => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2 text-sm border-b pb-2';
+    const name = document.createElement('div');
+    name.className = 'flex-1 text-gray-800';
+    name.textContent = f.name;
+    const gi = document.createElement('div');
+    gi.className = 'text-xs text-gray-500 w-16 text-center';
+    gi.textContent = 'GI:' + f.gi;
+    const carb = document.createElement('div');
+    carb.className = 'text-xs text-gray-500 w-14 text-center';
+    carb.textContent = f.carb + 'g';
+    const gl = document.createElement('div');
+    const glColor = f.gl <= 10 ? 'text-green-600' : f.gl <= 20 ? 'text-yellow-600' : 'text-red-600';
+    gl.className = 'font-bold w-14 text-center ' + glColor;
+    gl.textContent = 'GL:' + f.gl;
+    const meal = document.createElement('div');
+    meal.className = 'text-xs text-gray-400 w-10';
+    meal.textContent = f.meal;
+    const del = document.createElement('button');
+    del.className = 'text-red-300 hover:text-red-500 text-xs';
+    del.setAttribute('aria-label', f.name + 'を削除');
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      const d = loadData();
+      if (d[date]) { d[date].splice(idx, 1); saveData(d); render(); }
+    });
+    row.appendChild(name);
+    row.appendChild(gi);
+    row.appendChild(carb);
+    row.appendChild(gl);
+    row.appendChild(meal);
+    row.appendChild(del);
+    foodList.appendChild(row);
+  });
+
+  const altContainer = document.getElementById('alternatives');
+  altContainer.innerHTML = '';
+  LOW_GL_ALTERNATIVES.forEach(a => {
+    const card = document.createElement('div');
+    card.className = 'bg-green-50 rounded-lg p-2';
+    const name = document.createElement('div');
+    name.className = 'font-semibold text-green-800 text-sm';
+    name.textContent = a.name;
+    const note = document.createElement('div');
+    note.className = 'text-xs text-green-600';
+    note.textContent = a.note;
+    card.appendChild(name);
+    card.appendChild(note);
+    altContainer.appendChild(card);
+  });
+}
+
+document.getElementById('add-btn').addEventListener('click', () => {
+  const sel = document.getElementById('food-select').value;
+  const customFood = document.getElementById('custom-food').value.trim();
+  const carbInput = parseFloat(document.getElementById('carb-amount').value);
+  const meal = document.getElementById('meal-type').value;
+  const date = getSelectedDate();
+
+  let foodName, gi, carb;
+
+  if (sel) {
+    const parsed = JSON.parse(sel);
+    foodName = parsed.name;
+    gi = parsed.gi;
+    carb = isNaN(carbInput) ? parsed.carb : carbInput;
+  } else if (customFood) {
+    const customGI = parseInt(document.getElementById('custom-gi').value);
+    if (isNaN(customGI) || customGI < 1) { alert('カスタム食品のGI値を入力してください'); return; }
+    if (isNaN(carbInput)) { alert('炭水化物量を入力してください'); return; }
+    foodName = customFood;
+    gi = customGI;
+    carb = carbInput;
+  } else {
+    alert('食品を選択または入力してください'); return;
+  }
+
+  if (isNaN(carb) || carb <= 0) { alert('炭水化物量を入力してください'); return; }
+
+  const gl = calcGL(gi, carb);
+  const data = loadData();
+  if (!data[date]) data[date] = [];
+  data[date].push({ name: foodName, gi, carb, gl, meal });
+  saveData(data);
+
+  document.getElementById('food-select').value = '';
+  document.getElementById('custom-food').value = '';
+  document.getElementById('custom-gi').value = '';
+  document.getElementById('carb-amount').value = '';
+  render();
+});
+
+document.getElementById('clear-day-btn').addEventListener('click', () => {
+  const date = getSelectedDate();
+  if (!confirm(date + 'のデータを削除しますか？')) return;
+  const data = loadData();
+  delete data[date];
+  saveData(data);
+  render();
+});
+
+document.getElementById('date-select').addEventListener('change', render);
+document.getElementById('date-select').value = todayStr();
+
+populateFoodSelect();
+render();
+</script>
+</body>
+</html>
